@@ -3,41 +3,84 @@ import jwt from 'jsonwebtoken'
 import { JWT_SECRET } from '@repo/backend-common/config';
 import { CreateUserSchema, SigninSchema ,CreateRoomSchema} from '@repo/common/types';
 import { middleware } from './middleware';
+import { prisma } from '@repo/db/prisma-client';
 
 const app = express();
 const PORT =3001;
-app.use(express());
+app.use(express.json());
 
-app.post('/signup',(req ,res ) => {
+app.post('/signup',async(req ,res ) => {
     try {
-        //@ts-ignore  variables unused!
-        const {username , email , password} = CreateUserSchema.safeParse(req.body);
+        const parsedData = CreateUserSchema.safeParse(req.body);
+        
+        if(!parsedData.success){
+            res.status(422).json({
+                message:"invalid inputs",
+                parsedData
+            })
+            return;
+        }
 
-        //db call if email doesn't exists
+        const {username , email , password , photo} = parsedData.data;
         //hash the password using bcrypt
-        //insert into db
+        await prisma.user.create({
+            data: {
+                name: username,
+                email: email,
+                password: password,
+                photo: photo
+            }
+        });
 
         res.status(200).json({
             message:"user created succcesful."
         })
-    } catch (error) {
+
+    } catch (error:any) {
+        console.log(error);
+
+        if(error.name == "PrismaClientKnownRequestError" && error.meta.target == "email"){
+            res.status(409).json({
+                message:"email already exists!",
+            })
+            return;
+        }
+        
         res.status(500).json({
-            message:"error creating user."
+            message:"error creating user.",
+            error
         })
     }
 })
 
-app.post('/signin',(req ,res ) => {
+app.post('/signin',async (req ,res ) => {
     try {
-        //@ts-ignore  variables unused!
-        const { email , password} = SigninSchema.safeParse(req.body);
+
+        const parsedData = SigninSchema.safeParse(req.body);
         
-        //db call if email doesn't exists
-        //see if password matches
+        if(!parsedData.success){
+            res.status(422).json({
+                message:"invalid inputs",
+                parsedData
+            })
+            return;
+        }
 
-        const userId = 1;
+        const isUserExists = await prisma.user.findFirst({
+            where:{
+                email:parsedData.data.email,
+                password:parsedData.data.password
+            }
+        })
 
-        const token = jwt.sign ({userId}, JWT_SECRET);
+        if(!isUserExists) {
+            res.status(400).json({
+            message:"user doesn't exists or invalid credentials"
+        })
+        return;
+        }        
+
+        const token = jwt.sign ({userId:isUserExists.id}, JWT_SECRET);
 
         res.status(200).json({
             message:"user signed in succcesful.",
@@ -50,30 +93,46 @@ app.post('/signin',(req ,res ) => {
     } 
 })
 
-app.post('/room',middleware,(req ,res ) => {
+app.post('/room',middleware,async (req ,res ) => {
     try {
 
-        const data = CreateRoomSchema.safeParse(req.body)
+        const parsedData = CreateRoomSchema.safeParse(req.body)
 
-        if(!data.success){
+        if(!parsedData.success){
             res.status(422).json({
                 message:"invalid inputs"
             })
             return;
         }
-        
-        const roomId = 123;
-        res.status(200).json({
-            roomId
+
+        const createdRoom = await prisma.room.create({
+            data:{
+                slug: parsedData.data.name,
+                adminId:req.userId
+            }
         })
-    } catch (error) {
+        
+        res.status(200).json({
+            roomId:createdRoom.id,
+            roomName:createdRoom.slug
+        })
+    } catch (error:any) {
+
+        
+       if(error.name == "PrismaClientKnownRequestError" && error.meta.target == "slug") {
+        res.status(409).json({
+            message:"Already room Exists!",
+        })
+        return;
+       }
+
         res.status(500).json({
-            message:"error creating room"
+            message:"error creating room",
+            error
         })
     }
 })
 
 app.listen(PORT , () => {
     console.log(`Http server running in port: ${PORT}`);
-    
 })
